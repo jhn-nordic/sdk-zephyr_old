@@ -27,7 +27,6 @@ extern unsigned int zepfull_private_der_len;
 /*
  * This is the hard-coded root certificate that we accept.
  */
-#include "globalsign.inc"
 
 static u8_t client_id[] = CONFIG_CLOUD_CLIENT_ID;
 #ifdef CONFIG_CLOUD_SUBSCRIBE_CONFIG
@@ -55,7 +54,7 @@ static struct sockaddr_storage broker;
 static u8_t rx_buffer[1024];
 static u8_t tx_buffer[1024];
 
-static sec_tag_t m_sec_tags[] = {
+static sec_tag_t m_sec_tags[] = {1
 #if defined(MBEDTLS_X509_CRT_PARSE_C)
 		1,
 #endif
@@ -78,7 +77,7 @@ time_t my_k_time(time_t *ptr)
 	time_t now;
 
 	stamp = k_uptime_get();
-	now = (time_t)((stamp + time_base) / 1000);
+	now = (time_t)(time_base + (stamp / 1000));
 
 	if (ptr) {
 		*ptr = now;
@@ -178,21 +177,47 @@ void mqtt_evt_handler(struct mqtt_client *const client,
 static int wait_for_input(int timeout)
 {
 	int res;
-	struct pollfd fds[1] = {
-		[0] = {.fd = client_ctx.transport.tls.sock,
-		      .events = ZSOCK_POLLIN,
-		      .revents = 0},
-	};
-
-	res = poll(fds, 1, timeout);
+	struct pollfd fds = {.fd = client_ctx.transport.tls.sock,
+		      .events = POLLIN
+		      };
+	int cnt=10;
+	res=0;
+	while(res < 1)
+	{
+	  res = poll(&fds, 1, timeout);
+	  k_sleep(K_MSEC(10));
+	}
 	if (res < 0) {
 		LOG_ERR("poll read event error");
 		return -errno;
 	}
+	if(res==0){
+		LOG_ERR("no result from poll");
+	}
 
 	return res;
 }
+static int wait_for_input2(int timeout)
+{
+	int res;
+	struct pollfd fds = {.fd = client_ctx.transport.tls.sock,
+		      .events = POLLIN
+		      };
+	int cnt=10;
+	
+	
+	  res = poll(&fds, 1, timeout);
+	
+	if (res < 0) {
+		LOG_ERR("poll read event error");
+		return -errno;
+	}
+	if(res==0){
+		LOG_ERR("no result from poll");
+	}
 
+	return res;
+}
 #define ALIVE_TIME	(60 * MSEC_PER_SEC)
 
 static struct mqtt_utf8 password = {
@@ -204,6 +229,20 @@ static struct mqtt_utf8 username = {
 	.size = sizeof(client_username)
 };
 
+uint32_t inet_addr(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
+{
+    uint32_t ret_val = 0;
+
+    uint8_t * byte_array = (uint8_t *) &ret_val;
+
+    byte_array[0] = a;
+    byte_array[1] = b;
+    byte_array[2] = c;
+    byte_array[3] = d;
+
+    return ret_val;
+}
+
 void mqtt_startup(char *hostname, int port)
 {
 	int err, cnt;
@@ -214,14 +253,15 @@ void mqtt_startup(char *hostname, int port)
 	static struct addrinfo hints;
 	struct addrinfo *haddr;
 	int res = 0;
-	int retries = 5;
+	int retries = 1;
 
 	while (retries) {
 		hints.ai_family = AF_INET;
 		hints.ai_socktype = SOCK_STREAM;
 		hints.ai_protocol = 0;
+		hints.ai_flags = 0;
 		cnt = 0;
-		while ((err = getaddrinfo("mqtt.googleapis.com", "8883", &hints,
+		while ((err = getaddrinfo("mqtt.googleapis.com", NULL, &hints,
 					  &haddr)) && cnt < 3) {
 			LOG_ERR("Unable to get address for broker, retrying");
 			cnt++;
@@ -232,19 +272,19 @@ void mqtt_startup(char *hostname, int port)
 				res);
 			return;
 		}
-		LOG_INF("DNS resolved for mqtt.googleapis.com:8833");
+		LOG_INF("DNS resolved for mqtt.googleapis.com:8883");
 
 		mqtt_client_init(client);
 
 		time_t now = my_k_time(NULL);
-
+		LOG_INF("Time: %ld", now);
 		res = jwt_init_builder(&jb, token, sizeof(token));
 		if (res != 0) {
 			LOG_ERR("Error with JWT token");
 			return;
 		}
 
-		res = jwt_add_payload(&jb, now + 60 * 60, now,
+		res = jwt_add_payload(&jb, now + 10 * 60, now,
 				      CONFIG_CLOUD_AUDIENCE);
 		if (res != 0) {
 			LOG_ERR("Error with JWT token");
@@ -259,12 +299,16 @@ void mqtt_startup(char *hostname, int port)
 			return;
 		}
 
-
+		
 		broker4->sin_family = AF_INET;
 		broker4->sin_port = htons(port);
 		net_ipaddr_copy(&broker4->sin_addr,
 				&net_sin(haddr->ai_addr)->sin_addr);
 
+		(broker4->sin_addr.s_addr) = inet_addr(64,233,184,206);
+		// 		((struct sockaddr_in *)haddr->ai_addr)
+		// 		->sin_addr.s_addr;
+		//LOG_INF("IPv4 Address 0x%08x", broker4->sin_addr.s_addr);
 		/* MQTT client configuration */
 		client->broker = &broker;
 		client->evt_cb = mqtt_evt_handler;
@@ -287,11 +331,37 @@ void mqtt_startup(char *hostname, int port)
 		struct mqtt_sec_config *tls_config =
 				&client->transport.tls.config;
 
-		tls_config->peer_verify = 2;
+		tls_config->peer_verify = 1;
+		tls_config->cipher_count = 0;
 		tls_config->cipher_list = NULL;
 		tls_config->sec_tag_list = m_sec_tags;
 		tls_config->sec_tag_count = ARRAY_SIZE(m_sec_tags);
 		tls_config->hostname = hostname;
+
+
+		// /* Provision Private Certificate. */
+		// err = nrf_inbuilt_key_write(
+		// 	CONFIG_NRF_CLOUD_SEC_TAG,
+		// 	NRF_KEY_MGMT_CRED_TYPE_PRIVATE_CERT,
+		// 	NRF_CLOUD_CLIENT_PRIVATE_KEY,
+		// 	sizeof(NRF_CLOUD_CLIENT_PRIVATE_KEY));
+		// if (err) {
+		// 	LOG_ERR("NRF_CLOUD_CLIENT_PRIVATE_KEY err: %d", err);
+		// 	return err;
+		// }
+
+		// /* Provision Public Certificate. */
+		// err = nrf_inbuilt_key_write(
+		// 	CONFIG_NRF_CLOUD_SEC_TAG,
+		// 	NRF_KEY_MGMT_CRED_TYPE_PUBLIC_CERT,
+		// 	NRF_CLOUD_CLIENT_PUBLIC_CERTIFICATE,
+		// 	sizeof(NRF_CLOUD_CLIENT_PUBLIC_CERTIFICATE));
+		// if (err) {
+		// 	LOG_ERR("NRF_CLOUD_CLIENT_PUBLIC_CERTIFICATE err: %d",
+		// 		err);
+		// 	return err;
+		// }
+	
 
 		LOG_INF("Connecting to host: %s", hostname);
 		err = mqtt_connect(client);
@@ -306,7 +376,7 @@ void mqtt_startup(char *hostname, int port)
 		if (wait_for_input(5000) > 0) {
 			mqtt_input(client);
 			if (!connected) {
-				LOG_ERR("failed to connect to mqtt_broker");
+				LOG_ERR("failed to connect to mqtt_broker I am not connected?");
 				mqtt_disconnect(client);
 				retries--;
 				k_sleep(ALIVE_TIME);
@@ -315,7 +385,7 @@ void mqtt_startup(char *hostname, int port)
 				break;
 			}
 		} else {
-			LOG_ERR("failed to connect to mqtt broker");
+			LOG_ERR("failed to connect to mqtt broker. wait for input is 0 or less");
 			mqtt_disconnect(client);
 			retries--;
 			k_sleep(ALIVE_TIME);
@@ -357,7 +427,8 @@ void mqtt_startup(char *hostname, int port)
 
 	while (1) {
 		LOG_INF("Publishing data");
-		sprintf(pub_msg, "%s: %d\n", "payload", pub_data.message_id);
+		//sprintf(pub_msg, "%s: %d\n", "nRF91 in Google CLOUD! ", pub_data.message_id);
+		sprintf(pub_msg, "{ 'temperature': 12 }");
 		pub_data.message.payload.len = strlen(pub_msg);
 		err = mqtt_publish(client, &pub_data);
 		if (err) {
@@ -368,9 +439,10 @@ void mqtt_startup(char *hostname, int port)
 		/* idle and process messages */
 		while (k_uptime_get() < next_alive) {
 			LOG_INF("... idling ...");
-			if (wait_for_input(5000) > 0) {
+			if (wait_for_input2(5000) > 0) {
 				mqtt_input(client);
 			}
+			 k_sleep(K_MSEC(1000));
 		}
 
 		mqtt_live(client);

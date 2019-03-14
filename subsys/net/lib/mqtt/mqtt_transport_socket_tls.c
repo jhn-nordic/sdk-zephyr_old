@@ -45,7 +45,7 @@ int mqtt_client_tls_connect(struct mqtt_client *client)
 	if (ret < 0) {
 		goto error;
 	}
-
+	MQTT_TRC("OK 1");
 	if (tls_config->cipher_list != NULL && tls_config->cipher_count > 0) {
 		ret = setsockopt(client->transport.tls.sock, SOL_TLS,
 				 TLS_CIPHERSUITE_LIST, tls_config->cipher_list,
@@ -54,7 +54,7 @@ int mqtt_client_tls_connect(struct mqtt_client *client)
 			goto error;
 		}
 	}
-
+	MQTT_TRC("OK 2");
 	if (tls_config->sec_tag_list != NULL && tls_config->sec_tag_count > 0) {
 		ret = setsockopt(client->transport.tls.sock, SOL_TLS,
 				 TLS_SEC_TAG_LIST, tls_config->sec_tag_list,
@@ -63,7 +63,7 @@ int mqtt_client_tls_connect(struct mqtt_client *client)
 			goto error;
 		}
 	}
-
+	MQTT_TRC("OK 3");
 	if (tls_config->hostname) {
 		ret = setsockopt(client->transport.tls.sock, SOL_TLS,
 				 TLS_HOSTNAME, tls_config->hostname,
@@ -72,14 +72,16 @@ int mqtt_client_tls_connect(struct mqtt_client *client)
 			goto error;
 		}
 	}
-
+	MQTT_TRC("hostname %s",tls_config->hostname);
+	MQTT_TRC("OK 4");
 	size_t peer_addr_size = sizeof(struct sockaddr_in6);
 
 	if (broker->sa_family == AF_INET) {
 		peer_addr_size = sizeof(struct sockaddr_in);
 	}
+	MQTT_TRC("OK 5");
 
-	ret = connect(client->transport.tls.sock, client->broker,
+	ret=connect(client->transport.tls.sock, client->broker,
 		      peer_addr_size);
 	if (ret < 0) {
 		goto error;
@@ -89,6 +91,7 @@ int mqtt_client_tls_connect(struct mqtt_client *client)
 	return 0;
 
 error:
+	MQTT_TRC("We are fucked. %d", ret);
 	(void)close(client->transport.tls.sock);
 	return -errno;
 }
@@ -111,6 +114,7 @@ int mqtt_client_tls_write(struct mqtt_client *client, const u8_t *data,
 		ret = send(client->transport.tls.sock, data + offset,
 			   datalen - offset, 0);
 		if (ret < 0) {
+			MQTT_TRC("We are doomed. %d", offset);
 			return -errno;
 		}
 
