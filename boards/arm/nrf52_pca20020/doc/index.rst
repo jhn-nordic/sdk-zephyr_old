@@ -178,6 +178,14 @@ connectors.
 | P0.15   | SCL_EXT |
 +---------+---------+
 
+The following device is attached to the bus.
+
++----------+---------+
+| Device   | Address |
++==========+=========+
+| LIS2DH12 | 0x19    |
++----------+---------+
+
 Pin Header
 ----------
 
